@@ -21,21 +21,25 @@ Contact author for permission: https://github.com/OpenRFStack
  */
 #pragma once
 #include "Config.hpp"
-#include <au/units/hertz.hh>
+
 #include <complex>
 #include <string>
 #include <vector>
 
-namespace df {
+#include <au/units/hertz.hh>
+
+namespace df
+{
 
 /// @brief Result produced by DfEngine::compute().
-struct DfResult {
-    au::QuantityD<au::Hertz> center_freq_hz{au::hertz(0.0)}; ///< Signal carrier frequency.
-    double      azimuth_deg{0.0};    ///< Bearing clockwise from North, 0–360°.
-    float       confidence{0.0f};    ///< MUSIC peak-to-mean prominence [0, 1].
-    int         num_elements{0};     ///< Number of antenna elements that contributed.
-    std::string algorithm;           ///< Algorithm identifier (e.g. "MUSIC").
-    bool        valid{false};        ///< False if insufficient elements or SNR.
+struct DfResult
+{
+    au::QuantityD<au::Hertz> center_freq_hz{au::hertz(0.0)};  ///< Signal carrier frequency.
+    double                   azimuth_deg{0.0};  ///< Bearing clockwise from North, 0–360°.
+    float                    confidence{0.0f};  ///< MUSIC peak-to-mean prominence [0, 1].
+    int                      num_elements{0};   ///< Number of antenna elements that contributed.
+    std::string              algorithm;         ///< Algorithm identifier (e.g. "MUSIC").
+    bool                     valid{false};      ///< False if insufficient elements or SNR.
 };
 
 /**
@@ -53,7 +57,8 @@ struct DfResult {
  * Phase coherence requirement: all receivers must share a common oscillator
  * reference (GPS-disciplined, hardwired, or using a reference signal).
  */
-class DfEngine {
+class DfEngine
+{
 public:
     /**
      * @brief Construct the engine with a given angular sweep resolution.
@@ -75,16 +80,15 @@ public:
      *                      computation could not be performed (e.g. too few
      *                      elements, degenerate covariance matrix).
      */
-    DfResult compute(
-        const std::vector<std::vector<float>>& iq_snapshots,
-        const std::vector<AntennaElement>&     antennas,
-        au::QuantityD<au::Hertz> freq) const;
+    DfResult compute(const std::vector<std::vector<float>>& iq_snapshots,
+                     const std::vector<AntennaElement>&     antennas,
+                     au::QuantityD<au::Hertz>               freq) const;
 
 private:
-    double angle_step_deg_; ///< Angular sweep resolution in degrees.
+    double angle_step_deg_;  ///< Angular sweep resolution in degrees.
 };
 
-} // namespace df
+}  // namespace df
 
 /*
 ========================================================================
