@@ -217,6 +217,83 @@ TEST_F(DfEngineTest, MoreElements_BetterAccuracyAtModerateSnr)
         << "5-el=" << r5.confidence << " 2-el=" << r2.confidence;
 }
 
+// ── Regression: steering-vector sign (audit finding DF-01) ────────────────────
+//
+// Commit ce688f1 negated the steering vector, rotating every bearing by 180°.
+// This generator does not assume a phase sign: it models the physical arrival
+// delay τ_i of a plane wave at each element and an ideal quadrature
+// down-converter (RF at f_c + f_tone mixed with e^{-j2πf_c t}), which is what
+// any SoapySDR CF32 stream delivers. Swept over all quadrants on the
+// asymmetric L-shaped array from config/df.xml so a 180° rotation or an E↔W /
+// N↔S mirror cannot pass.
+static std::vector<std::vector<float>> makeDelayBasedSnapshot(
+    const std::vector<df::AntennaElement>& antennas,
+    double bearing_deg, double fc_hz, int n_samples, std::mt19937& rng)
+{
+    constexpr double C       = 2.998e8;
+    constexpr double FS      = 2e6;
+    constexpr double TONE_HZ = 12.5e3;
+    const double th = bearing_deg * M_PI / 180.0;
+    const double ux = std::sin(th), uy = std::cos(th);   // towards the source
+    std::normal_distribution<double> noise(0.0, 0.02);
+    std::vector<std::vector<float>> out;
+    for (const auto& a : antennas) {
+        // Element nearer the source (positive r·u) is reached EARLIER.
+        const double tau = -(a.x * ux + a.y * uy) / C;
+        std::vector<float> iq(2 * (size_t)n_samples);
+        for (int n = 0; n < n_samples; ++n) {
+            const double t = n / FS;
+            // Received RF: cos(2π(fc+ftone)(t − τ)). Ideal I/Q down-conversion
+            // by fc keeps exp(j[2π(fc+ftone)(t − τ) − 2π·fc·t]).
+            const double ph = 2.0 * M_PI * (fc_hz + TONE_HZ) * (t - tau)
+                            - 2.0 * M_PI * fc_hz * t;
+            iq[2 * n]     = (float)(std::cos(ph) + noise(rng));
+            iq[2 * n + 1] = (float)(std::sin(ph) + noise(rng));
+        }
+        out.push_back(std::move(iq));
+    }
+    return out;
+}
+
+TEST_F(DfEngineTest, DelayModel_AllQuadrants_LShapedArray)
+{
+    // config/df.xml example array (λ/2 at 300 MHz).
+    const std::vector<df::AntennaElement> l_array = {
+        {"scanner-0", 0.00f, 0.00f, 0.0f},
+        {"scanner-1", 0.00f, 0.50f, 0.0f},
+        {"scanner-2", 0.50f, 0.00f, 0.0f},
+        {"scanner-3", 1.00f, 0.00f, 0.0f},
+    };
+    constexpr double FC = 300e6;
+    for (int b = 0; b < 360; b += 15) {
+        auto snap = makeDelayBasedSnapshot(l_array, b, FC, N_SAMP, rng_);
+        auto r    = engine_.compute(snap, l_array, au::hertz(FC));
+        EXPECT_TRUE(r.valid) << "bearing " << b;
+        EXPECT_LT(angleDiff(r.azimuth_deg, b), TOLERANCE_DEG)
+            << "true " << b << "° → estimated " << r.azimuth_deg << "°";
+    }
+}
+
+// Documents the most likely real-world cause of "mirrored" bearings: entering
+// antenna x (East) coordinates with the wrong sign mirrors bearings E↔W
+// (θ → −θ). The engine is right; the array description is wrong.
+TEST_F(DfEngineTest, MirroredArrayConfig_MirrorsBearing)
+{
+    const std::vector<df::AntennaElement> truth = {
+        {"a0", 0.00f, 0.00f, 0.0f}, {"a1", 0.00f, 0.50f, 0.0f},
+        {"a2", 0.50f, 0.00f, 0.0f}, {"a3", 1.00f, 0.00f, 0.0f},
+    };
+    auto mirrored = truth;
+    for (auto& a : mirrored) a.x = -a.x;     // operator typed West-positive
+    constexpr double FC = 300e6;
+    auto snap = makeDelayBasedSnapshot(truth, 40.0, FC, N_SAMP, rng_);
+    auto good = engine_.compute(snap, truth,    au::hertz(FC));
+    auto bad  = engine_.compute(snap, mirrored, au::hertz(FC));
+    EXPECT_LT(angleDiff(good.azimuth_deg, 40.0),  TOLERANCE_DEG);
+    EXPECT_LT(angleDiff(bad.azimuth_deg,  320.0), TOLERANCE_DEG)
+        << "mirrored config should report −40° (got " << bad.azimuth_deg << "°)";
+}
+
 /*
 ========================================================================
 End of file — OpenRFStack

@@ -84,9 +84,19 @@ DfResult DfEngine::compute(
     // ── MUSIC pseudo-spectrum sweep ───────────────────────────────────────────
     // Bearing convention: θ=0° North, θ=90° East (clockwise), ENU frame.
     // Steering vector component for antenna i at bearing θ:
-    //   a_i(θ) = exp(-j·k·(x_i·sin(θ) + y_i·cos(θ)))
-    // where k = 2π/λ and the inner product gives the path-length projection
-    // onto the direction towards the source.
+    //   a_i(θ) = exp(+j·k·(x_i·sin(θ) + y_i·cos(θ)))
+    // where k = 2π/λ and u(θ) = (sinθ, cosθ) points from the array TOWARDS the
+    // source. An element with positive projection r_i·u is closer to the source,
+    // so the wavefront reaches it earlier by τ = (r_i·u)/c. After standard SDR
+    // down-conversion (RF above the LO → positive baseband frequency) an earlier
+    // arrival is a phase ADVANCE e^{+j·2π·f_c·τ} = e^{+j·k·(r_i·u)}. This is the
+    // textbook array manifold (Van Trees: v = e^{-j·kᵀp} with wavenumber
+    // k = -(2π/λ)·u). Negating the phase evaluates u → -u, i.e. every bearing
+    // is reported rotated by exactly 180° (the regression introduced by
+    // ce688f1 — tests/unit/test_df_engine.cpp caught it: 0°→180°, 90°→270°).
+    // If field bearings look mirrored, check the antenna x/y convention
+    // (x = East, y = North), the scanner_id→element mapping, and whether a
+    // receiver delivers spectrally inverted (conjugated) IQ — not this sign.
     double k = 2.0 * PI * freq_hz / SPEED_OF_LIGHT;
 
     double best_power   = -1.0;
@@ -99,13 +109,10 @@ DfResult DfEngine::compute(
 
         Eigen::VectorXcd a(M);
         for (int i = 0; i < M; ++i) {
-            // Phase-delay convention: a_i(θ) = exp(-j·k·(x_i·sinθ + y_i·cosθ))
-            // The covariance R is built from the raw received signal, which has
-            // phase delay proportional to the path length projection. The steering
-            // vector must use the same sign or MUSIC mirrors bearings across N-S.
+            // Phase advance for elements nearer the source (see comment above).
             double phase = k * (antennas[i].x * std::sin(bearing_rad)
                                + antennas[i].y * std::cos(bearing_rad));
-            a(i) = std::exp(Cx(0.0, -phase));
+            a(i) = std::exp(Cx(0.0, phase));
         }
 
         // P(θ) = 1 / ‖Eₙᴴ a‖²
